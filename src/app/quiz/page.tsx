@@ -41,26 +41,80 @@ export default function QuizPage() {
   const totalSteps = 7
   const progress = (step / totalSteps) * 100
 
+  const ensureTableExists = async () => {
+    try {
+      // Tentar criar a tabela se não existir
+      const { error: createError } = await supabase.rpc('exec_sql', {
+        sql: `
+          CREATE TABLE IF NOT EXISTS quiz_responses (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id uuid,
+            age_range text NOT NULL,
+            relationship_status text NOT NULL,
+            problem_duration text NOT NULL,
+            frequency text NOT NULL,
+            anxiety_level integer NOT NULL,
+            tried_solutions text[] NOT NULL DEFAULT '{}',
+            main_concern text,
+            created_at timestamptz DEFAULT now()
+          );
+        `
+      })
+      
+      // Se a função RPC não existir, ignorar (usuário precisa criar manualmente)
+      if (createError && !createError.message.includes('function')) {
+        console.log('Tabela verificada/criada')
+      }
+    } catch (err) {
+      console.log('Não foi possível verificar tabela automaticamente')
+    }
+  }
+
   const handleSubmit = async () => {
     setLoading(true)
 
     try {
+      // Tentar garantir que a tabela existe
+      await ensureTableExists()
+
       const { data: { user } } = await supabase.auth.getUser()
 
       const { error } = await supabase
         .from('quiz_responses')
         .insert({
-          ...quizData,
+          age_range: quizData.age_range,
+          relationship_status: quizData.relationship_status,
+          problem_duration: quizData.problem_duration,
+          frequency: quizData.frequency,
+          anxiety_level: quizData.anxiety_level,
+          tried_solutions: quizData.tried_solutions,
+          main_concern: quizData.main_concern || '',
           user_id: user?.id || null
         })
 
-      if (error) throw error
+      if (error) {
+        console.error("Erro detalhado:", error)
+        
+        // Verificar se é erro de tabela não existente
+        if (error.message.includes('relation') || error.message.includes('does not exist')) {
+          alert("A tabela do quiz ainda não foi criada no banco de dados. Por favor, execute o seguinte SQL no seu Supabase:\n\nCREATE TABLE quiz_responses (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  user_id uuid,\n  age_range text NOT NULL,\n  relationship_status text NOT NULL,\n  problem_duration text NOT NULL,\n  frequency text NOT NULL,\n  anxiety_level integer NOT NULL,\n  tried_solutions text[] NOT NULL DEFAULT '{}',\n  main_concern text,\n  created_at timestamptz DEFAULT now()\n);")
+          return
+        }
+        
+        throw error
+      }
 
       setCompleted(true)
       setTimeout(() => router.push("/"), 3000)
-    } catch (error) {
+    } catch (error: any) {
       console.error("Erro ao salvar quiz:", error)
-      alert("Erro ao salvar suas respostas. Tente novamente.")
+      
+      // Mensagem de erro mais específica
+      if (error?.message) {
+        alert(`Erro ao salvar suas respostas: ${error.message}\n\nVerifique se o Supabase está configurado corretamente.`)
+      } else {
+        alert("Erro ao salvar suas respostas. Verifique se o Supabase está configurado e tente novamente.")
+      }
     } finally {
       setLoading(false)
     }
